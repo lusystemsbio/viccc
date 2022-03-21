@@ -9,7 +9,7 @@ set.seed(123)
 topoName <- "repressilator"
 runSim <- FALSE     # whether to simulate topology
 runPCA <- FALSE
-nSamples <- 10000
+nSamples <- 1000
 
 
 # directory setup
@@ -39,27 +39,19 @@ racipe_norm <- sracipeNormalize(racipe)
 exprMat <- assay(racipe)
 exprMat_norm <- assay(racipe_norm)
 
-# Cluster expression data
-metadata <- prepMetadata(exprMat = exprMat, cluster = T, k = 6)
 
 # create SCE object
 # you can also specify other params radius, minNeighbors, etc - see ?vicSE
 vic <- vicSE(topo = topo, exprMat = exprMat, normData = exprMat_norm,
              topoName = topoName, expName = "repressilator_example")
 
-# add metadata to SCE object
-rownames(metadata) <- metadata$SampleID
-colData(vic) <- DataFrame(metadata)
-colnames(vic) <- colData(vic)$SampleID
+
+# Cluster expression data
+vic <- prepMetadata(sce = vic, exprMat = exprMat, cluster = T, k = 6)
 
 # run PCA
-pca <- runPCA(assay(vic, "normcounts"))
-saveRDS(pca, file.path(outputDir,"PCA_res.Rds"))
+vic <- runPCA(vic)
 
-# add PCA to SCE object
-reducedDim(vic, "PCA") <- pca$x
-vic@metadata$pca_data <- pca[1:4]
-vic@metadata$pca_summary <- summary(pca)
 
 # compute grid based on PCA
 vic <- computeGrid(vic)

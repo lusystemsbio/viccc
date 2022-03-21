@@ -98,12 +98,14 @@ vicSE <- function(topo,
 #' substituted with a previously existing data.frame and is only necessary if no metadata table
 #' exists. This will also divide the dataset into k clusters using the ward.d2 method.
 #' @return data.frame with cells as rows and metadata characteristics as columns.
+#' @param sce
 #' @param exprMat data.frame or matrix. Non-normalized expression matrix with rows as features
 #' and columns as cells.
 #' @param cluster logical. Whether to perform hierarchical clustering.
 #' @param ... Additional arguments to the (internal) clustering function - k (number of clusters),
 #' features (which features to cluster by, defaults to all), and clustfun (default "ward.D2")
-prepMetadata <- function(exprMat,
+prepMetadata <- function(sce,
+                         exprMat,
                          cluster = T,
                          ...            # Parameters for getClusters function
 ) {
@@ -112,7 +114,9 @@ prepMetadata <- function(exprMat,
   metadata$SampleID <- rownames(metadata)
   metadata$Cluster <- clusters
 
-  return(metadata)
+  colData(sce) <- DataFrame(metadata)
+  colnames(sce) <- colData(sce)$SampleID
+  return(sce)
 
 }
 
@@ -150,13 +154,22 @@ getClusters <- function(k = 2,                  # Number of clusters
 #' @export
 #' @title Perform PCA on gene expression data
 #' @description Returns a vector of cluster numbers corresponding to each cell in a dataset.
-#' @return list with class "prcomp" containing elements sdev, rotation, x, center, and scale.
+#' @return modified viccc object containing pca transformed data in reducedDim(obj, "PCA") and pca parameters in obj@metadata$pca_data.
 #' @importFrom stats prcomp
+#' @param sce viccc object.
 #' @param exprMat data.frame or matrix. Expression matrix with rows as features and columns as
 #' cells.
-runPCA <- function(exprMat) {
-  ## TODO: convert this so the input is a vic object and output is same, but modified
-  return(prcomp(t(exprMat)))
+runPCA <- function(sce) {
+
+  exprMat <- assay(sce, "normcounts")
+  pca <- prcomp(t(exprMat))
+
+  # add PCA to SCE object
+  reducedDim(sce, "PCA") <- pca$x
+  sce@metadata$pca_data <- pca[1:4]
+  sce@metadata$pca_summary <- summary(pca)
+
+  return(sce)
 }
 
 
@@ -327,6 +340,29 @@ computeGridVectors <- function(sce,
 Avg_IDW <- function(vals, weights) {
   return(sum(vals * weights) / sum(weights))
 }
+
+
+
+#' @title Distance function
+#' @description Small utility function to compute dist of a given matrix
+#' @return dist
+#' @param x numeric input matrix.
+distfun=function(x) {
+  return(as.dist((1-cor(t(x), method = 's'))/20))
+}
+
+
+
+#' @title Convert list to numeric
+#' @description Small utility function to ensure a list of data is in numeric format
+#' @return list converted to numeric data type
+#' @param x input list
+listToNumeric <- function(x) {
+  return(as.numeric(unname(unlist(x))))
+}
+
+
+
 
 #' @export
 #' @title Plot single-cell velocities
