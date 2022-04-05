@@ -411,7 +411,7 @@ plotVectors <- function(sce,
   }
 
   if(is.na(plotSuffix)) {
-    plotSuffix <- Sys.time()
+    plotSuffix <- format(Sys.time(), "%b_%d")
   }
   fileName <- file.path(outputDir,paste0("PCA_vectors_",expName,"_",plotSuffix,".pdf"))
 
@@ -536,7 +536,7 @@ plotGrid <- function(sce,
   }
 
   if(is.na(plotSuffix)) {
-    plotSuffix <- Sys.time()
+    plotSuffix <- format(Sys.time(), "%b_%d")
   }
   fileName <- file.path(outputDir,paste0("PCA_grid_",expName,"_",plotSuffix,".pdf"))
 
