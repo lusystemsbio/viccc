@@ -1,4 +1,18 @@
 rm(list=ls())
+
+
+# these lines install the prerequisites
+install.packages(c("BiocManager"))
+library(BiocManager)
+BiocManager::install(c("sRACIPE","SingleCellExperiment"))
+
+# these lines install this package
+# these will be removed at a later date, when the package is hosted on CRAN or Bioconductor
+install.packages("devtools")
+library(devtools)
+devtools::install()
+
+
 library(sRACIPE)
 library(SingleCellExperiment)
 library(VICCC)
@@ -7,12 +21,11 @@ set.seed(123)
 
 # global params
 topoName <- "repressilator"
-runSim <- FALSE     # whether to simulate topology
-runPCA <- FALSE
-nSamples <- 1000
+nSamples <- 2000
 
 
 # directory setup
+dir.create(file.path(getwd(),"input_topos"))
 topoDir <- file.path(getwd(),topoName)
 outputDir = file.path(topoDir,"data")
 if(!dir.exists(topoDir)) {
@@ -31,7 +44,7 @@ write.table(topo, file = file.path(getwd(),"input_topos","repressilator.tpo"), s
 topo <- loadTopo(topoName)
 
 # simulate topology using sRACIPE - 2000 models by default, can specify with the param numModels
-racipe <- simTopo(topo)
+racipe <- simTopo(topo, numModels = nSamples)
 saveRDS(racipe, file.path(outputDir, paste0("simData_",topoName,".Rds")))
 
 # normalize data using sRACIPE function
