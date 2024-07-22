@@ -71,11 +71,13 @@ vicSE <- function(topo,
                   normData,
                   topoName,
                   expName = NA,
-                  radius = 0.15,
+                  radius = 0.05,
                   minNeighbors = 5,
                   scalingFactor = 1,
                   gridScalingFactor = 1,
-                  verbose = T
+                  verbose = T,
+                  useOriginalFeatures = F,
+                  nPCs = NA
                   ) {
   vic <- SingleCellExperiment(assays = SimpleList(counts=exprMat, normcounts=normData))
   if(is.na(expName)) {
@@ -83,11 +85,15 @@ vicSE <- function(topo,
   } else {
     vic@metadata$experimentName <- expName
   }
+  
+  if(is.na(nPCs)) {
+    nPCs <- nrow(exprMat)
+  }
   vic@metadata$topoName <- topoName
   vic@metadata$topo <- topo
 
   vic@metadata$params <- list(sample_radius=radius, plotScalingFactor=scalingFactor, gridPlotScalingFactor=gridScalingFactor,
-                              minNeighbors=minNeighbors, verbose=verbose)
+                              minNeighbors=minNeighbors, verbose=verbose, useOriginalFeatures=useOriginalFeatures, nPCs=nPCs)
   return(vic)
 }
 
@@ -98,7 +104,7 @@ vicSE <- function(topo,
 #' substituted with a previously existing data.frame and is only necessary if no metadata table
 #' exists. This will also divide the dataset into k clusters using the ward.d2 method.
 #' @return data.frame with cells as rows and metadata characteristics as columns.
-#' @param sce
+#' @param sce SingleCellExperiment object.
 #' @param exprMat data.frame or matrix. Non-normalized expression matrix with rows as features
 #' and columns as cells.
 #' @param cluster logical. Whether to perform hierarchical clustering.
@@ -157,12 +163,21 @@ getClusters <- function(k = 2,                  # Number of clusters
 #' @return modified viccc object containing pca transformed data in reducedDim(obj, "PCA") and pca parameters in obj@metadata$pca_data.
 #' @importFrom stats prcomp
 #' @param sce viccc object.
-#' @param exprMat data.frame or matrix. Expression matrix with rows as features and columns as
 #' cells.
-runPCA <- function(sce) {
+runPCA <- function(sce,
+                   save=T,
+                   fname=NA) {
+  
+  if(save && is.na(fname)) {
+    fname <- file.path(getwd(),sce@metadata$topoName,"data","PCA_res.Rds")
+  }
 
   exprMat <- assay(sce, "normcounts")
   pca <- prcomp(t(exprMat))
+  
+  if(save & !file.exists(fname)) {
+    saveRDS(pca, file=fname)
+  }
 
   # add PCA to SCE object
   reducedDim(sce, "PCA") <- pca$x
@@ -615,7 +630,297 @@ plotGrid <- function(sce,
 
 
 
+#' @export
+#' @title Compute single-cell transition vector
+#' @description Calculates predicted transition vectors v1 and v2 for a query point.
+#' @return named list of results containing X and Y (position on first two dimensions), boolean values for logging purposes, 
+#' and predicted vectors.
+#' @importFrom MASS ginv
+#' @importFrom plyr revalue
+#' @importFrom stats cor
+#' @param sce sticcc object 
+#' @param query_point character. Rowname of posMat indicating which sample to compute a vector for.
+#' @param useGinv logical. Whether to use generalized inverse for computing least-squares regression. 
+#' Default FALSE, but may be helpful with very homogeneous datasets.
+#' @param v2 logical. If TRUE, will calculate v2 (incoming transition) as well as v1 (outgoing). Default TRUE.
+#' @param invertV2 logical. If TRUE, will multiply v2 by -1 such that it points "forward in time" as v1. Default FALSE. Note this step
+#' may be necessary for downstream analysis. 
+#' @param maxNeighbors numeric. Maximum number of neighbors to include in linear regression - if there are more neighbors in range 
+#' than this limit, this value will be used to randomly sample a subset.
+computeVector <- function(sce, query_point, useGinv=F, v2=T, invertV2=F, maxNeighbors = 100) {
+  ## Prepare results
+  rs_list <- list("X"=NA,"Y"=NA,"fewNeighbors"=FALSE,"numNeighbors"=NA,"usedGinv"=FALSE,"nonInvertible"=FALSE,"selfCorNA"=FALSE,"selfCor"=NA,"b_vec"=NA,"b_vec_in"=NA,"det"=NA)
+  
+  ## extract variables from sce
+  # Create sign vector
+  topo <- sce@metadata$topo
+  sign_vector <- revalue(factor(topo$Type), c('1'='1','2'='-1','3'='1','4'='-1','5'='1','6'='-1'), warn_missing = FALSE)
+  sign_vector <- as.numeric(levels(sign_vector))[sign_vector]
+  
+  # Compute sampling radius
+  sampling_radius <- sce@metadata$params$sample_radius * sce@metadata$max_dist
+  
+  # get posMat (position matrix - this should be either identical or closely correlated w/ the data used to compute dist_mat)
+  if(is.null(sce@metadata$params$nPCs)) {
+    nPCs <- nrow(sce)
+    sce@metadata$params$nPCs <- nPCs
+    
+  } else {
+    nPCs <- sce@metadata$params$nPCs
+  }
+
+  # use first nPCs PCs as spatial coordinates unless genes are specified
+  pcaMat <- reducedDim(sce, "PCA")[colnames(sce),1:nPCs]
+  if(sce@metadata$params$useOriginalFeatures) {
+    posMat <- as.data.frame(t(assay(sce, "normcounts")))[colnames(sce),]
+  } else {
+    posMat <- pcaMat
+  }
+  
+  posList <- colnames(posMat)
+  rownames(posMat) <- colnames(sce)
+  
+  # get exprMat (normalized expression matrix - high-dimensional data (rows=features, cols=samples))
+  exprMat <- assay(sce,"normcounts")
+  
+  # Get query point data
+  query_data <- posMat[query_point,]
+  rs_list[["X"]] <- query_data[1]
+  rs_list[["Y"]] <- query_data[2]
+  
+  ## Find neighbors
+  neighbors <- which(sce@metadata$dist_mat[query_point,colnames(sce)] <= sampling_radius)
+  #neighbors <- neighbors[which(neighbors %in% colnames(sce))]
+  
+  ## Skip sample if number of neighbors too small
+  if(length(neighbors) <= (sce@metadata$params$minNeighbors+1)) {
+    rs_list[["fewNeighbors"]] <- TRUE
+    rs_list[["numNeighbors"]] <- length(neighbors)-1
+    return(rs_list)
+  }
+  
+  ## Select neighbors
+  subset_models <- as.data.frame(posMat[neighbors,])
+  subset_models <- subset_models[-which(rownames(subset_models) %in% query_point),]
+  rs_list[["numNeighbors"]] <- nrow(subset_models)
+  
+  ## Subset neighbors if over max
+  if(nrow(subset_models) > maxNeighbors) {
+    neighborSubset <- sample(rownames(subset_models), maxNeighbors)
+    subset_models <- subset_models[neighborSubset,]
+  }
+  
+  ## Multiple regression
+  # Create relative positional matrix of neighbor samples
+  subset_models[,1:ncol(subset_models)] <- apply(subset_models[,1:ncol(subset_models)], 2, listToNumeric)
+  deriv_df <- sweep(subset_models, 2, as.numeric(query_data), "-")
+  
+  # get relative expression matrix & transpose (neighboring cells only)
+  geneex_mat <- as.matrix(deriv_df[,posList])
+  geneex_mat_transposed <- t(geneex_mat)
+  
+  # Multiply relative positional matrix by its transpose
+  mat_product <- geneex_mat_transposed %*% geneex_mat
+  rs_list[["det"]] <- det(mat_product)
+  
+  # Take the inverse if possible - if not, skip this sample
+  if(useGinv) {
+    tol = 10^-6
+    if(rcond(mat_product) < tol){
+      inverse_mat = ginv(mat_product)
+      rs_list[["usedGinv"]] <- TRUE
+      
+    } else{
+      inverse_mat <- tryCatch({
+        solve(mat_product)
+      }, error = function(e) {
+        "non-invertible"
+      })
+    }
+  } else {
+    inverse_mat <- tryCatch({
+      solve(mat_product)
+    }, error = function(e) {
+      "non-invertible"
+    })
+  }
+  
+  
+  if(inverse_mat[1] == "non-invertible") {
+    rs_list[["nonInvertible"]] <- TRUE
+    return(rs_list)
+  }
+  
+  # Multiply the inverted matrix by the transposed positional matrix
+  x_mat <- inverse_mat %*% geneex_mat_transposed
+  
+  
+  ## Calculate delayed correlation
+  # Self correlation - skip this sample if NA
+  src_activity <- as.numeric(exprMat[topo$Source,query_point] * sign_vector)
+  self_target_activity <- as.numeric(exprMat[topo$Target,query_point]) 
+  self_cor <- cor(self_target_activity, src_activity)
+  if(is.na(self_cor)) {
+    rs_list[["selfCorNA"]] <- TRUE
+    return(rs_list)
+  } 
+  rs_list[["selfCor"]] <- self_cor
+  
+  # For each neighbor:
+  deriv_df$DelayedCorr <- NA
+  for(model in rownames(deriv_df)) {
+    # Correlate neighbor target activity with query source activity * sign_vector
+    neighbor_target_activity <- as.numeric(exprMat[topo$Target, model]) 
+    if(sd(neighbor_target_activity) > 0 & sd(src_activity)) {
+      neighbor_cor <- cor(neighbor_target_activity,src_activity) 
+      deriv_df[model,"DelayedCorr"] <- (neighbor_cor - self_cor)
+    } else {
+      #print(paste("Issue with correlation in models ",query_point, " and ", model))
+      deriv_df[model,"DelayedCorr"] <- NA
+    }
+    
+    ## QQ REMOVE THIS
+    #plot(src_activity, neighbor_target_activity)
+  }
+  
+  # Remove NA values caused by zero variance vectors
+  na_models <- which(is.na(deriv_df$DelayedCorr))
+  if(length(na_models) > 0) {
+    deriv_df <- deriv_df[-na_models,]
+    subset_models <- subset_models[-na_models,]
+    x_mat <- x_mat[,-na_models]
+  }
+  
+  
+  # Compute product of earlier matrix product and delayed corr vector
+  corr_vec <- as.matrix(deriv_df[,"DelayedCorr"])
+  b_vec <- x_mat %*% corr_vec
+  rs_list[["b_vec"]] <- b_vec
+  
+  ### Bias didn't seem to make a big difference
+  # if(bias) {
+  #   ## Split data into train/test 80:20
+  #   train_idx <- sample(nrow(deriv_df), round(nrow(deriv_df)*0.8))
+  #   df.train <- deriv_df[train_idx,]
+  #   df.test <- deriv_df[-train_idx,]
+  #   
+  #   alpha.guess <- 0
+  #   beta.guess <- rep(0,nPCs)
+  #   
+  #   h <- 100
+  #   error <- rep(NA,h)
+  #   lambda <- seq(0,1,length.out = h)
+  #   
+  #   fit <- lm(DelayedCorr~.-1, data=df.train)
+  #   yhat.test <- predict(fit, newdata = df.test)
+  #   yhat.guess <- alpha.guess + as.matrix(df.test[,-ncol(df.test)]) %*% beta.guess
+  #   
+  #   error <- sapply(lambda, function(j) sum(((1-j)*yhat.test + j*yhat.guess - df.test$DelayedCorr)^2))
+  #   rs_list[["error"]] <- error
+  # }
+  # 
+  
+  
+  ## Compute v2 as well, if specified
+  if(v2) {
+    # For each neighbor:
+    deriv_df$DelayedCorr_in <- NA
+    for(model in rownames(deriv_df)) {
+      # Correlate neighbor source activity * sign_vector with query target activity 
+      neighbor_src_activity <- as.numeric(exprMat[topo$Source, model]) * sign_vector
+      neighbor_cor <- cor(neighbor_src_activity,self_target_activity)
+      deriv_df[model,"DelayedCorr_in"] <- (neighbor_cor - self_cor)
+    }
+    
+    # Remove NA values caused by zero variance vectors
+    na_models <- which(is.na(deriv_df$DelayedCorr))
+    if(length(na_models) > 0) {
+      deriv_df <- deriv_df[-na_models,]
+      subset_models <- subset_models[-na_models,]
+      x_mat <- x_mat[,-na_models]
+    }
+    
+    
+    # Compute product of earlier matrix product and delayed corr vector
+    corr_vec <- as.matrix(deriv_df[,"DelayedCorr_in"])
+    b_vec_in <- x_mat %*% corr_vec
+    
+    if(invertV2) {
+      b_vec_in <- -1*b_vec_in
+    }
+    
+    rs_list[["b_vec_in"]] <- b_vec_in
+    
+  }
+  
+  return(rs_list)
+}
 
 
+
+
+#' @export
+#' @title Plot network to file
+#' @description Saves an image of the network topology
+#' @return NULL
+#' @import visNetwork
+#' @param sce sticcc object 
+#' @param outputDir character. Directory to save plot. Default is a subdirectory of the working 
+#' directory with the same name as sce@metadata$topoName, which will be created if it does not exist
+#' @param plotSuffix character. String to append to plot filename. Default is the current time. 
+plotNetwork <- function(sce, outputDir=NA, plot_suffix=NA) {
+  if(is.na(outputDir)) {
+    outputDir <- file.path(getwd(),sce@metadata$topoName)
+  }
+  if(!dir.exists(outputDir)) {
+    dir.create(outputDir)
+  }
+  
+  if(is.na(plot_suffix)) {
+    plot_suffix <- Sys.time()
+  }
+  
+  
+  net_file <- file.path(outputDir,paste0("networkVis",plot_suffix,".html"))
+  
+  topo <- sce@metadata$topo
+  
+  topo[which(as.numeric(topo$Type) %% 2 == 0),"Type"] <- 2
+  topo[which(as.numeric(topo$Type) %% 2 == 1),"Type"] <- 1
+  
+  
+  node_list <-
+    unique(c(topo[, 1], topo[, 2]))
+  
+  nodes <-
+    data.frame(
+      id = node_list,
+      label = node_list,
+      font.size = 50,
+      value = c(rep(1, length(node_list)))
+    )
+  edge_col <- data.frame(c(1, 2), c("blue", "darkred"))
+  arrow_type <- data.frame(c(1, 2), c("arrow", "circle"))
+  colnames(arrow_type) <- c("type", "color")
+  colnames(edge_col) <- c("type", "color")
+  edges <-
+    data.frame(
+      from = c(topo[, 1]),
+      to = c(topo[, 2]),
+      arrows.to.type	= arrow_type$color[c(as.numeric(topo[, 3]))],
+      width = 3,
+      color = edge_col$color[c(as.numeric(topo[, 3]))]
+    )
+  
+  networkPlot <-
+    visNetwork::visNetwork(nodes, edges, height = "1000px", width = "100%") %>%
+    visEdges(arrows = "to") %>%
+    visOptions(manipulation = FALSE) %>%
+    visLayout(randomSeed = 123) %>%
+    #visNodes(scaling = list(label = list(enabled = T))) %>%
+    visPhysics(solver = "forceAtlas2Based", stabilization = FALSE)
+  visNetwork::visSave(networkPlot, file = net_file, selfcontained = FALSE)
+  
+}
 
 
