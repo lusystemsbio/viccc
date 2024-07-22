@@ -163,9 +163,14 @@ getClusters <- function(k = 2,                  # Number of clusters
 #' @return modified viccc object containing pca transformed data in reducedDim(obj, "PCA") and pca parameters in obj@metadata$pca_data.
 #' @importFrom stats prcomp
 #' @param sce viccc object.
-#' cells.
+#' @param save logical. Whether to save pca results to file
+#' @param overwrite logical. If true, pca file will overwrite preivous pca if one exists. Default TRUE. 
+#' Set this to FALSE if you intend to use a specific PCA projection for further analysis
+#' @param fname character. Where to save pca results. Default will be an Rds file named PCA_res in the data 
+#' subdirectory of the topology directory.
 runPCA <- function(sce,
                    save=T,
+                   overwrite=T,
                    fname=NA) {
   
   if(save && is.na(fname)) {
@@ -175,7 +180,7 @@ runPCA <- function(sce,
   exprMat <- assay(sce, "normcounts")
   pca <- prcomp(t(exprMat))
   
-  if(save & !file.exists(fname)) {
+  if(save & (!file.exists(fname) | overwrite)) {
     saveRDS(pca, file=fname)
   }
 
@@ -275,10 +280,23 @@ computeDist <- function(sce,
 #' @return viccc object with smoothed data in sce@metadata$grid.df
 #' @param sce viccc object after computing inferred velocities.
 #' @param scalingFactor numeric. Constant to multiply vectors by for visual clarity.
+#' @param unitVectors logical. Whether to scale grid point vectors to a magnitude of 1. Default FALSE. 
+#' @param inVectors logical. Whether to compute grid vectors using v2 predictions instead of v1. Default FALSE
+#' @param combine logical. Whether to combine v1 and v2 for either net flow or reversibility in grid output. Default FALSE.
+#' @param how character. Describes how to combine v1 and v2 for grid vectors. Must be one of "net", "rev", "v1+v2", or "v1-v2".
 computeGridVectors <- function(sce,
-                               scalingFactor = NA) {
+                               scalingFactor = NA,
+                               unitVectors = TRUE,
+                               inVectors = FALSE,
+                               combine = FALSE,
+                               how = NA) {
   if(is.na(scalingFactor)) {
     scalingFactor <- sce@metadata$params$gridPlotScalingFactor
+  }
+  
+  if(combine & is.na(how)) {
+    print("Error: must specify how if combine == T")
+    return(NULL)
   }
 
   # Get gridpoints from metadata
@@ -301,8 +319,41 @@ computeGridVectors <- function(sce,
                          plot_df$Y <= (query$Y + y.dist) &
                          plot_df$Y >= (query$Y - y.dist))
 
+    
+    # Decide which vector (or sum) to be plotted
+    if(inVectors) {
+      subset_data <- plot_df[neighbors,c("X","Y","dX_in","dY_in")]
+    } else {
+      
+      if(combine) {
+        
+        if(how == "v1+v2") {
+          subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
+          subset_data$dX = subset_data$dX + plot_df$dX_in[neighbors]
+          subset_data$dY = subset_data$dY + plot_df$dY_in[neighbors]
+        } else if(how == "v1-v2") {
+          subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
+          subset_data$dX = subset_data$dX - plot_df$dX_in[neighbors]
+          subset_data$dY = subset_data$dY - plot_df$dY_in[neighbors]
+        } else if(how == "net") {
+          subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
+          subset_data$dX = (subset_data$dX + plot_df$dX_in[neighbors]) / 2
+          subset_data$dY = (subset_data$dY + plot_df$dY_in[neighbors]) / 2
+        } else if(how == "rev") {
+          subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
+          subset_data$dX = (subset_data$dX - plot_df$dX_in[neighbors]) / 2
+          subset_data$dY = (subset_data$dY - plot_df$dY_in[neighbors]) / 2
+        } else {
+          print("Error: must specify `how`, if `combine` is set to TRUE")
+        }
+        
+        
+      } else {
+        subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
+      }
+      
+    }
 
-    subset_data <- plot_df[neighbors,c("X","Y","dX","dY")]
     subset_data <- na.omit(subset_data)
     grid.df[point,"numNeighbors"] <- nrow(subset_data)
 
@@ -332,14 +383,24 @@ computeGridVectors <- function(sce,
     grid.df[which(grid.df$GridPoint == point),"dy"] <- avg_dy
   }
 
-  ## Scale all vectors to the fixed maximum (fixed magnitude for all?)
-  grid.df$Magnitude <- sqrt(grid.df$dx^2 + grid.df$dy^2)
-  mean.magnitude <- mean(grid.df$Magnitude[which(grid.df$Magnitude > 0)])
-  scaling.factor <- grid.dist / mean.magnitude
-
-  grid.df$dx <- grid.df$dx * scaling.factor * scalingFactor
-  grid.df$dy <- grid.df$dy * scaling.factor * scalingFactor
-  grid.df$Magnitude <- grid.df$Magnitude * scaling.factor * scalingFactor
+  if(unitVectors) {
+    scaleR <- function(x) {x / sqrt(sum(x^2))}
+    scaled_vecs <-  as.data.frame(t(apply(grid.df[,c("dx","dy")], 1, scaleR)))
+    grid.df$dx = scaled_vecs[,1] * grid.dist * 0.7
+    grid.df$dy = scaled_vecs[,2] * grid.dist * 0.7
+    grid.df$Magnitude <- sqrt(grid.df$dx^2 + grid.df$dy^2)
+    
+  } else {
+    ## Scale all vectors to the target mean?
+    grid.df$Magnitude <- sqrt(grid.df$dx^2 + grid.df$dy^2)
+    
+    # mean.magnitude <- mean(grid.df$Magnitude[which(grid.df$Magnitude > 0)])
+    # scaling.factor <- grid.dist / mean.magnitude
+    # grid.df$dx <- grid.df$dx * scaling.factor * scalingFactor
+    # grid.df$dy <- grid.df$dy * scaling.factor * scalingFactor
+    # grid.df$Magnitude <- grid.df$Magnitude * scaling.factor * scalingFactor
+  }
+  
 
   ## Write to object
   sce@metadata$grid.df <- grid.df
@@ -514,7 +575,7 @@ plotVectors <- function(sce,
 #' @import ggplot2
 #' @importFrom varhandle check.numeric
 #' @param sce viccc object after computing inferred velocities
-#' @param colorVar character. Colname of colData(sce) by which to color the plot
+#' @param colorVar character. Colname of colData(sce) by which to color the plot. May be left NA for grey plot
 #' @param plotLoadings logical. Whether to plot the loadings for each gene. Only recommended for
 #' very small (<5 gene) circuits. Default FALSE.
 #' @param loadingFactor numeric. Constant to multiply loadings by to improve visual clarity.
@@ -523,14 +584,20 @@ plotVectors <- function(sce,
 #' @param outputDir character. File path for the directory to save the plot.
 #' @param plotSuffix character. Suffix for plot filename.
 #' @param scalingFactor numeric. Constant to multiply vectors by for visual clarity.
+#' @param minMagnitude numeric. Smallest magnitude for which a vector will be drawn. Default 0.01.
+#' @param arrowSize numeric. Size of arrows in plot.
+#' @param arrowheadSize numeric. Size of arrowheads in plot.
 plotGrid <- function(sce,
-                       colorVar,
-                       plotLoadings = F,
-                       loadingFactor = 3.5,
-                       colorPalette = NA,
-                       outputDir = NA,
-                       plotSuffix = NA,
-                       scalingFactor = NA) {
+                     colorVar,
+                     plotLoadings = F,
+                     loadingFactor = 3.5,
+                     colorPalette = NA,
+                     outputDir = NA,
+                     plotSuffix = NA,
+                     scalingFactor = NA,
+                     minMagnitude = 0.01,
+                     arrowSize = 3,
+                     arrowheadSize = 0.3) {
 
   ## Create directory for output
   if(is.na(outputDir)) {
@@ -558,10 +625,12 @@ plotGrid <- function(sce,
 
   # Get 2D plotting coordinates of samples from first 2 cols of position matrix
   plot_df <- as.data.frame(colData(sce))
-  if(!colorVar %in% colnames(plot_df)) {
-    print("Error: colorVar not found in colnames of colData")
+  if(!is.na(colorVar)) {
+    if(!colorVar %in% colnames(plot_df)) {
+      print("Error: colorVar not found in colnames of colData")
+    }  
   }
-
+  
   xMin <- sce@metadata$params$xMin
   xMax <- sce@metadata$params$xMax
   yMin <- sce@metadata$params$yMin
@@ -586,31 +655,49 @@ plotGrid <- function(sce,
   grid.df <- sce@metadata$grid.df
   x.points <- unique(sce@metadata$grid.df$x.points)
   y.points <- unique(sce@metadata$grid.df$y.points)
-  plot_df$colorVar <- plot_df[,colorVar]
-
-  if(colorVar == "Cluster") {
-    plot_df$colorVar <- factor(plot_df$colorVar)
-  }
-
+  
   ## Plot grid points
-  image <- ggplot(grid.df[which(grid.df$Magnitude > 0.01),], aes(x=x.points,y=y.points)) +
-    geom_point(data=plot_df[,],mapping=aes(x=X,y=Y,size=1, color=colorVar)) +
-    geom_point(mapping=aes(size=1)) +
-    xlab(plot_xlab) +
-    ylab(plot_ylab) +
-    scale_size(range=c(1.0, 3)) +
-    xlim(xMin,xMax) +
-    ylim(yMin,yMax) +
-    #scale_color_manual(values=c(cbPalette[2:8])) +
-    geom_segment(aes(xend=x.points+dx, yend=y.points+dy), arrow = arrow(length = unit(0.2,"cm"))) +
-    guides(alpha="none", size="none", color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
-    theme(axis.text = element_text(size=20), axis.title = element_text(size=28))
-  if(all(!check.numeric(plot_df$colorVar)) | colorVar == "Cluster") {
-    if(is.na(colorPalette)) {
-      colorPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+  if(!is.na(colorVar)) {
+    plot_df$colorVar <- plot_df[,colorVar]
+    
+    if(colorVar == "Cluster") {
+      plot_df$colorVar <- factor(plot_df$colorVar)
     }
-    image <- image + scale_color_manual(values=c(colorPalette))
+    
+    image <- ggplot(grid.df[which(grid.df$Magnitude > minMagnitude),], aes(x=x.points,y=y.points)) +
+      geom_point(data=plot_df[,],mapping=aes(x=X,y=Y,size=1, color=colorVar)) +
+      geom_point(mapping=aes(size=1)) +
+      xlab(plot_xlab) +
+      ylab(plot_ylab) +
+      scale_size(range=c(1.0, 3)) +
+      xlim(xMin,xMax) +
+      ylim(yMin,yMax) +
+      geom_segment(aes(xend=x.points+dx*scalingFactor, yend=y.points+dy*scalingFactor), 
+                   arrow = arrow(length = unit(arrowheadSize,"cm")), size=arrowSize) +
+      guides(alpha=FALSE, size=FALSE, color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
+      theme(axis.text = element_text(size=28), axis.title = element_text(size=36))
+    if(all(!check.numeric(plot_df$colorVar)) | colorVar == "Cluster") {
+      if(is.na(colorPalette)) {
+        colorPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+      }
+      image <- image + scale_color_manual(values=c(colorPalette))
+    }
+  } else {
+    image <- ggplot(grid.df[which(grid.df$Magnitude > minMagnitude),], aes(x=x.points,y=y.points)) +
+      geom_point(data=plot_df[,],mapping=aes(x=X,y=Y,size=1),color="grey",alpha=0.8) + 
+      geom_point(mapping=aes(size=1)) + 
+      xlab(plot_xlab) +
+      ylab(plot_ylab) +
+      scale_size(range=c(1.0, 3)) +
+      xlim(xMin,xMax) +
+      ylim(yMin,yMax) +
+      geom_segment(aes(xend=x.points+dx*scalingFactor, yend=y.points+dy*scalingFactor), 
+                   arrow = arrow(length = unit(arrowheadSize,"cm")), size=arrowSize) +
+      guides(alpha=FALSE, size=FALSE, color=FALSE) +
+      theme(axis.text = element_text(size=28), axis.title = element_text(size=36)) 
+    
   }
+ 
   if(plotLoadings) {
     loadingLabelFactor <- loadingFactor+0.5
     image <- image + geom_segment(data = loadingDF[,],aes(xend=PC1*loadingFactor, yend=PC2*loadingFactor, x = X, y = Y), arrow = arrow(length = unit(0.6,"cm"))) +

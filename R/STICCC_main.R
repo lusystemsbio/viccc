@@ -56,6 +56,7 @@ runSTICCC <- function(sce, v2=TRUE, useGinv=FALSE, ...
   #sce@metadata$det_list <- list()
 
   weighted_vector_list <- vector(mode = "list", length = length(sample_list))
+  weighted_vector_list_in <- vector(mode = "list", length = length(sample_list))
   pb = txtProgressBar(min = 0, max = length(sample_list),
                       initial = 0, style = 3)
   stepi <- 0
@@ -85,9 +86,9 @@ runSTICCC <- function(sce, v2=TRUE, useGinv=FALSE, ...
     } 
     
     
-    if(bias) {
-      error[stepi,] <- rs_list[["error"]]
-    }
+    #if(bias) {
+    #  error[stepi,] <- rs_list[["error"]]
+    #}
     
     
     ## Save vector to master list

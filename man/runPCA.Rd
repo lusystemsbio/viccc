@@ -4,11 +4,18 @@
 \alias{runPCA}
 \title{Perform PCA on gene expression data}
 \usage{
-runPCA(sce, save = T, fname = NA)
+runPCA(sce, save = T, overwrite = T, fname = NA)
 }
 \arguments{
-\item{sce}{viccc object.
-cells.}
+\item{sce}{viccc object.}
+
+\item{save}{logical. Whether to save pca results to file}
+
+\item{overwrite}{logical. If true, pca file will overwrite preivous pca if one exists. Default TRUE. 
+Set this to FALSE if you intend to use a specific PCA projection for further analysis}
+
+\item{fname}{character. Where to save pca results. Default will be an Rds file named PCA_res in the data 
+subdirectory of the topology directory.}
 }
 \value{
 modified viccc object containing pca transformed data in reducedDim(obj, "PCA") and pca parameters in obj@metadata$pca_data.
