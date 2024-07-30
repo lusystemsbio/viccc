@@ -66,8 +66,8 @@ simTopo <- function(topo,
 #' @param scalingFactor numeric. Factor to multiply the magnitude of vectors for easier visual interpretation. Default 1.
 #' @param gridScalingFactor numeric. Factor to multiply the magnitude of vectors when applying grid-based smoothing. Default 1.
 #' @param verbose logical. Whether to print progress statements during analysis with this VICCC object. Default TRUE.
-vicSE <- function(topo,
-                  exprMat,
+sticSE <- function(topo,
+                  exprMat = NA,
                   normData,
                   topoName,
                   expName = NA,
@@ -79,22 +79,27 @@ vicSE <- function(topo,
                   useOriginalFeatures = F,
                   nPCs = NA
                   ) {
-  vic <- SingleCellExperiment(assays = SimpleList(counts=exprMat, normcounts=normData))
-  if(is.na(expName)) {
-    vic@metadata$experimentName <- paste0(topoName,"_SCE")
+  if(!all(is.na(exprMat))) {
+    stic <- SingleCellExperiment(assays = SimpleList(counts=exprMat, normcounts=normData))  
   } else {
-    vic@metadata$experimentName <- expName
+    stic <- SingleCellExperiment(assays = SimpleList(normcounts=normData))
+  }
+  
+  if(is.na(expName)) {
+    stic@metadata$experimentName <- paste0(topoName,"_SCE")
+  } else {
+    stic@metadata$experimentName <- expName
   }
   
   if(is.na(nPCs)) {
-    nPCs <- nrow(exprMat)
+    nPCs <- nrow(normData)
   }
-  vic@metadata$topoName <- topoName
-  vic@metadata$topo <- topo
+  stic@metadata$topoName <- topoName
+  stic@metadata$topo <- topo
 
-  vic@metadata$params <- list(sample_radius=radius, plotScalingFactor=scalingFactor, gridPlotScalingFactor=gridScalingFactor,
+  stic@metadata$params <- list(sample_radius=radius, plotScalingFactor=scalingFactor, gridPlotScalingFactor=gridScalingFactor,
                               minNeighbors=minNeighbors, verbose=verbose, useOriginalFeatures=useOriginalFeatures, nPCs=nPCs)
-  return(vic)
+  return(stic)
 }
 
 
@@ -203,8 +208,16 @@ runPCA <- function(sce,
 #' @param sce viccc object. Must have already executed the function runPCA().
 #' @param grid.length numeric. How many grid points should be in each side of the smoothed plot.
 #' Default 30.
+#' @param xMin numeric. Lower bound for plotting on x-axis.
+#' @param xMax numeric. Upper bound for plotting on x-axis.
+#' @param yMin numeric. Lower bound for plotting on y-axis.
+#' @param yMax numeric. Upper bound for plotting on y-axis.
 computeGrid <- function(sce,
-                        grid.length = 30
+                        grid.length = 30,
+                        xMin = NA,
+                        xMax = NA,
+                        yMin = NA,
+                        yMax = NA
 ) {
   # Get posMat
   posMat <- reducedDim(sce, "PCA")
@@ -212,14 +225,16 @@ computeGrid <- function(sce,
   # Define grid points, create metadata structure for later
   ## Create uniform grid
   # Set grid area (2-dimensional?) w uniform points
-  xMin <- floor(min(posMat[,1]))
-  xMax <- ceiling(max(posMat[,1]))
-  yMin <- floor(min(posMat[,2]))
-  yMax <- ceiling(max(posMat[,2]))
-  x.min <- xMin - 1
-  x.max <- xMax + 1
-  y.min <- yMin - 1
-  y.max <- yMax + 1
+  if(any(is.na(xMin))) {
+    xMin <- floor(min(posMat[,1]))
+    xMax <- ceiling(max(posMat[,1]))
+    yMin <- floor(min(posMat[,2]))
+    yMax <- ceiling(max(posMat[,2]))
+  }
+  x.min <- xMin
+  x.max <- xMax
+  y.min <- yMin
+  y.max <- yMax
 
   x.points <- seq(x.min, x.max, length.out = grid.length)
   y.points <- seq(y.min, y.max, length.out = grid.length)
@@ -588,7 +603,7 @@ plotVectors <- function(sce,
 #' @param arrowSize numeric. Size of arrows in plot.
 #' @param arrowheadSize numeric. Size of arrowheads in plot.
 plotGrid <- function(sce,
-                     colorVar,
+                     colorVar = NA,
                      plotLoadings = F,
                      loadingFactor = 3.5,
                      colorPalette = NA,
@@ -674,7 +689,7 @@ plotGrid <- function(sce,
       ylim(yMin,yMax) +
       geom_segment(aes(xend=x.points+dx*scalingFactor, yend=y.points+dy*scalingFactor), 
                    arrow = arrow(length = unit(arrowheadSize,"cm")), size=arrowSize) +
-      guides(alpha=FALSE, size=FALSE, color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
+      guides(alpha="none", size="none", color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
       theme(axis.text = element_text(size=28), axis.title = element_text(size=36))
     if(all(!check.numeric(plot_df$colorVar)) | colorVar == "Cluster") {
       if(is.na(colorPalette)) {
@@ -693,7 +708,7 @@ plotGrid <- function(sce,
       ylim(yMin,yMax) +
       geom_segment(aes(xend=x.points+dx*scalingFactor, yend=y.points+dy*scalingFactor), 
                    arrow = arrow(length = unit(arrowheadSize,"cm")), size=arrowSize) +
-      guides(alpha=FALSE, size=FALSE, color=FALSE) +
+      guides(alpha="none", size="none", color="none") +
       theme(axis.text = element_text(size=28), axis.title = element_text(size=36)) 
     
   }

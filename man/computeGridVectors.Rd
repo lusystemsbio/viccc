@@ -4,12 +4,27 @@
 \alias{computeGridVectors}
 \title{Grid-based smoothing of inferred velocities}
 \usage{
-computeGridVectors(sce, scalingFactor = NA)
+computeGridVectors(
+  sce,
+  scalingFactor = NA,
+  unitVectors = TRUE,
+  inVectors = FALSE,
+  combine = FALSE,
+  how = NA
+)
 }
 \arguments{
 \item{sce}{viccc object after computing inferred velocities.}
 
 \item{scalingFactor}{numeric. Constant to multiply vectors by for visual clarity.}
+
+\item{unitVectors}{logical. Whether to scale grid point vectors to a magnitude of 1. Default FALSE.}
+
+\item{inVectors}{logical. Whether to compute grid vectors using v2 predictions instead of v1. Default FALSE}
+
+\item{combine}{logical. Whether to combine v1 and v2 for either net flow or reversibility in grid output. Default FALSE.}
+
+\item{how}{character. Describes how to combine v1 and v2 for grid vectors. Must be one of "net", "rev", "v1+v2", or "v1-v2".}
 }
 \value{
 viccc object with smoothed data in sce@metadata$grid.df

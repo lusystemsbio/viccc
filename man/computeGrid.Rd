@@ -4,13 +4,21 @@
 \alias{computeGrid}
 \title{Compute grid points for later smoothing}
 \usage{
-computeGrid(sce, grid.length = 30)
+computeGrid(sce, grid.length = 30, xMin = NA, xMax = NA, yMin = NA, yMax = NA)
 }
 \arguments{
 \item{sce}{viccc object. Must have already executed the function runPCA().}
 
 \item{grid.length}{numeric. How many grid points should be in each side of the smoothed plot.
 Default 30.}
+
+\item{xMin}{numeric. Lower bound for plotting on x-axis.}
+
+\item{xMax}{numeric. Upper bound for plotting on x-axis.}
+
+\item{yMin}{numeric. Lower bound for plotting on y-axis.}
+
+\item{yMax}{numeric. Upper bound for plotting on y-axis.}
 }
 \value{
 viccc object with defined grid points in PCA space

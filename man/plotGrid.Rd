@@ -6,19 +6,22 @@
 \usage{
 plotGrid(
   sce,
-  colorVar,
+  colorVar = NA,
   plotLoadings = F,
   loadingFactor = 3.5,
   colorPalette = NA,
   outputDir = NA,
   plotSuffix = NA,
-  scalingFactor = NA
+  scalingFactor = NA,
+  minMagnitude = 0.01,
+  arrowSize = 3,
+  arrowheadSize = 0.3
 )
 }
 \arguments{
 \item{sce}{viccc object after computing inferred velocities}
 
-\item{colorVar}{character. Colname of colData(sce) by which to color the plot}
+\item{colorVar}{character. Colname of colData(sce) by which to color the plot. May be left NA for grey plot}
 
 \item{plotLoadings}{logical. Whether to plot the loadings for each gene. Only recommended for
 very small (<5 gene) circuits. Default FALSE.}
@@ -33,6 +36,12 @@ as there are unique values of colorVar. Default color palette includes 8 values.
 \item{plotSuffix}{character. Suffix for plot filename.}
 
 \item{scalingFactor}{numeric. Constant to multiply vectors by for visual clarity.}
+
+\item{minMagnitude}{numeric. Smallest magnitude for which a vector will be drawn. Default 0.01.}
+
+\item{arrowSize}{numeric. Size of arrows in plot.}
+
+\item{arrowheadSize}{numeric. Size of arrowheads in plot.}
 }
 \description{
 Saves a pdf plot showing the first 2 PCs of the dataset with grid-smoothed
