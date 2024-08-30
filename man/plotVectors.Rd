@@ -6,7 +6,7 @@
 \usage{
 plotVectors(
   sce,
-  colorVar,
+  colorVar = NA,
   plotLoadings = F,
   loadingFactor = 3.5,
   colorPalette = NA,
@@ -19,7 +19,7 @@ plotVectors(
 \arguments{
 \item{sce}{viccc object after computing inferred velocities}
 
-\item{colorVar}{character. Colname of colData(sce) by which to color the plot}
+\item{colorVar}{character. Colname of colData(sce) by which to color the plot, or NA to plot all grey}
 
 \item{plotLoadings}{logical. Whether to plot the loadings for each gene. Only recommended for
 very small (<5 gene) circuits. Default FALSE.}

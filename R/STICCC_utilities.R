@@ -463,7 +463,7 @@ listToNumeric <- function(x) {
 #' @import ggplot2
 #' @importFrom varhandle check.numeric
 #' @param sce viccc object after computing inferred velocities
-#' @param colorVar character. Colname of colData(sce) by which to color the plot
+#' @param colorVar character. Colname of colData(sce) by which to color the plot, or NA to plot all grey
 #' @param plotLoadings logical. Whether to plot the loadings for each gene. Only recommended for
 #' very small (<5 gene) circuits. Default FALSE.
 #' @param loadingFactor numeric. Constant to multiply loadings by to improve visual clarity.
@@ -474,7 +474,7 @@ listToNumeric <- function(x) {
 #' @param scalingFactor numeric. Constant to multiply vectors by for visual clarity.
 #' @param plotNoVectors logical. Set to TRUE to plot only the PCA without vectors. Default FALSE.
 plotVectors <- function(sce,
-                          colorVar,
+                          colorVar = NA,
                           plotLoadings = F,
                           loadingFactor = 3.5,
                           colorPalette = NA,
@@ -512,9 +512,12 @@ plotVectors <- function(sce,
 
   # Get 2D plotting coordinates of samples from first 2 cols of position matrix
   plot_df <- as.data.frame(colData(sce))
-  if(!colorVar %in% colnames(plot_df)) {
-    print("Error: colorVar not found in colnames of colData")
+  if(!is.na(colorVar)) {
+    if(!colorVar %in% colnames(plot_df)) {
+      print("Error: colorVar not found in colnames of colData")
+    }  
   }
+
 
   xMin <- sce@metadata$params$xMin
   xMax <- sce@metadata$params$xMax
@@ -534,38 +537,55 @@ plotVectors <- function(sce,
     loadingDF$X <- 0
     loadingDF$Y <- 0
   }
-
-
-  # Add relevant metadata to plotting df
-  plot_df$colorVar <- plot_df[,colorVar]
-
-  if(colorVar == "Cluster") {
-    plot_df$colorVar <- factor(plot_df$colorVar)
-  }
-
-
-
-  image <- ggplot(plot_df, aes(x=X,y=Y)) +
-    geom_point(mapping=aes(size=1, color=colorVar)) +
-    xlab(plot_xlab) +
-    ylab(plot_ylab) +
-    scale_size(range=c(1.75, 3)) +
-    guides(alpha="none", size="none", color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
-    xlim(xMin,xMax) +
-    ylim(yMin,yMax) +
-    ggtitle(paste0("PCA on ",expName," cells"))
-  if(all(!check.numeric(plot_df$colorVar)) | colorVar == "Cluster") {
-    if(is.na(colorPalette)) {
-      colorPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+  
+  ## Plot grid points
+  if(!is.na(colorVar)) {
+    plot_df$colorVar <- plot_df[,colorVar]
+    
+    if(colorVar == "Cluster") {
+      plot_df$colorVar <- factor(plot_df$colorVar)
     }
-    image <- image + scale_color_manual(values=c(colorPalette))
+    
+    image <- ggplot(plot_df, aes(x=X,y=Y)) +
+      geom_point(mapping=aes(size=1, color=colorVar)) +
+      xlab(plot_xlab) +
+      ylab(plot_ylab) +
+      scale_size(range=c(1.75, 3)) +
+      guides(alpha="none", size="none", color=guide_legend(title = colorVar, override.aes = list(size = 5))) +
+      xlim(xMin,xMax) +
+      ylim(yMin,yMax) +
+      ggtitle(paste0("PCA on ",expName," cells")) +
+      theme(axis.text = element_text(size=28), axis.title = element_text(size=36)) 
+    if(all(!check.numeric(plot_df$colorVar)) | colorVar == "Cluster") {
+      if(is.na(colorPalette)) {
+        colorPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+      }
+      image <- image + scale_color_manual(values=c(colorPalette))
+    }
+    
+  } else {
+    image <- ggplot(plot_df, aes(x=X,y=Y)) +
+      geom_point(mapping=aes(size=1), color="grey", alpha=0.8) +
+      xlab(plot_xlab) +
+      ylab(plot_ylab) +
+      scale_size(range=c(1.75, 3)) +
+      xlim(xMin,xMax) +
+      ylim(yMin,yMax) +
+      ggtitle(paste0("PCA on ",expName," cells")) +
+      guides(alpha="none", size="none", color="none") +
+      theme(axis.text = element_text(size=28), axis.title = element_text(size=36)) 
+    
   }
+  
+  
   if(plotLoadings) {
     loadingLabelFactor <- loadingFactor+0.5
     image <- image + geom_segment(data = loadingDF[,],aes(xend=PC1*loadingFactor, yend=PC2*loadingFactor, x = X, y = Y), arrow = arrow(length = unit(0.6,"cm"))) +
       geom_text(data = loadingDF[,], aes(x = PC1*loadingLabelFactor, y = PC2*loadingLabelFactor, label=gene), size=8, fontface="bold")
   }
 
+  
+  
   # Write to file without vectors
   if(plotNoVectors) {
     noVec_fName <- file.path(outputDir,paste0("PCA_",expName,"_",plotSuffix,".pdf"))
@@ -1024,5 +1044,154 @@ plotNetwork <- function(sce, outputDir=NA, plot_suffix=NA) {
   visNetwork::visSave(networkPlot, file = net_file, selfcontained = FALSE)
   
 }
+
+
+
+
+#' @export
+#' @title Compute a smoothed vector around a specific sample or gene expression state
+#' @description Finds neighboring samples around the supplied point, computes vectors for each, and 
+#' returns a distance-weighted average representing the smoothed vector for the region as if it 
+#' were a grid point from computeGridVectors
+#' @return A list containing the following elements: "start": the query point, "v1_x": v1 prediction
+#' for the first PC, "v1_y": v1 prediction for the second PC, "v2_x", "v2_y", "net_x", "net_y", "rev_x",
+#' "rev_y" denoting the other predictions in PC1 and PC2, "neighborhoodSize": number of nearby samples
+#' used to compute the , "smoothingNumber": 
+#' @param sce sticcc object 
+#' @param queryPoint character or vector. Either a rowname of sce, or a vector to be compared to 
+#' the normalized expression data.
+#' @param neighborhoodRadius numeric. Proportion of the maximum pairwise distance within sce to find
+#' neighbors to compute vectors for.
+smoothVector <- function(sce,
+                         queryPoint, # 
+                         neighborhoodRadius,
+                         ...) {
+  
+  
+  
+  neighbors <- getNeighbors(sce,
+                            queryPoint,
+                            neighborhoodRadius)
+  
+  neighbor.ids <- neighbors[["neighbor.ids"]]
+  neighbor.dists <- neighbors[["neighbor.dists"]]
+  
+  # check that there are sufficient neighbors
+  if(length(neighbor.ids) < 5) {
+    print(paste0("Error: not enough cells within the given neighborhoodRadius, only found ",length(neighbor.ids)))
+    return(NULL)
+  }
+  
+  
+  # Compute vectors for each neighbor
+  sce@metadata$params$sample_radius <- neighborhoodRadius
+  neighborhoodVectors <- data.frame(SampleID = neighbor.ids, Dist=neighbor.dists,
+                                    V1_x=NA,  V1_y=NA, 
+                                    V2_x=NA, V2_y=NA, 
+                                    Net_x=NA, Net_y=NA, 
+                                    Rev_x=NA, Rev_y=NA)
+  for(neighbor in neighbor.ids) {
+    # compute vector
+    v_list <- computeVector(sce, 
+                              neighbor,
+                              v2 = T,
+                              ...)
+    
+    # add to aggregated results
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "V1_x"] <- v_list[["b_vec"]][1,]
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "V1_y"] <- v_list[["b_vec"]][2,]
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "V2_x"] <- v_list[["b_vec_in"]][1,]
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "V2_y"] <- v_list[["b_vec_in"]][2,]
+    
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "Net_x"] <- (v_list[["b_vec"]][1,] + v_list[["b_vec_in"]][1,]) / 2
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "Net_y"] <- (v_list[["b_vec"]][2,] + v_list[["b_vec_in"]][2,]) / 2
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "Rev_x"] <- (v_list[["b_vec"]][1,] - v_list[["b_vec_in"]][1,]) / 2
+    neighborhoodVectors[which(neighborhoodVectors$SampleID == neighbor), "Rev_y"] <- (v_list[["b_vec"]][2,] - v_list[["b_vec_in"]][2,]) / 2
+  }
+  
+  
+  # subset neighborhood based on smoothing radius
+  # check that there are sufficient neighbors in the smoothing radius
+  smoothingDist <- neighborhoodRadius * sce@metadata$max_dist
+  neighborhoodVectors <- neighborhoodVectors[which(neighborhoodVectors$Dist < smoothingDist),]
+  
+  if(nrow(neighborhoodVectors) < 3) {
+    print("Warning: not enough vectors to smooth - consider increasing smoothingRadius")
+  }
+  
+  # compute IDW-weighted smoothed vectors
+  neighborhoodVectors$Proximity <- 1 / neighborhoodVectors$Dist
+  
+  avg_dx_v1 <- Avg_IDW(neighborhoodVectors$V1_x, neighborhoodVectors$Proximity)
+  avg_dy_v1 <- Avg_IDW(neighborhoodVectors$V1_y, neighborhoodVectors$Proximity)
+  
+  avg_dx_v2 <- Avg_IDW(neighborhoodVectors$V2_x, neighborhoodVectors$Proximity)
+  avg_dy_v2 <- Avg_IDW(neighborhoodVectors$V2_y, neighborhoodVectors$Proximity)
+  
+  avg_dx_net <- Avg_IDW(neighborhoodVectors$Net_x, neighborhoodVectors$Proximity)
+  avg_dy_net <- Avg_IDW(neighborhoodVectors$Net_y, neighborhoodVectors$Proximity)
+  
+  avg_dx_rev <- Avg_IDW(neighborhoodVectors$Rev_x, neighborhoodVectors$Proximity)
+  avg_dy_rev <- Avg_IDW(neighborhoodVectors$Rev_y, neighborhoodVectors$Proximity)
+  
+  
+  # return output vectors
+  out_list <- list(start=queryPoint,
+                   v1_x=avg_dx_v1,
+                   v1_y=avg_dy_v1,
+                   v2_x=avg_dx_v2,
+                   v2_y=avg_dy_v2,
+                   net_x=avg_dx_net,
+                   net_y=avg_dy_net,
+                   rev_x=avg_dx_rev,
+                   rev_y=avg_dy_rev,
+                   neighborhoodSize=length(neighbor.ids),
+                   smoothingNumber=nrow(neighborhoodVectors))
+  
+  
+  return(out_list)
+}
+
+
+#' @export
+#' @title Get nearby samples for a given query sample.
+#' @description Finds neighboring samples around the supplied point.
+#' @return A list containing the following elements: "neighbor.ids": the names of the nearby samples,
+#' "neighbor.dists": distances from each neighbor to the query point.
+#' @param sce sticcc object 
+#' @param queryPoint character or vector. Either a rowname of sce, or a vector to be compared to 
+#' the normalized expression data.
+#' @param neighborhoodRadius numeric. Proportion of the maximum pairwise distance within sce to find
+#' neighbors.
+getNeighbors <- function(sce,
+                         queryPoint,
+                         neighborhoodRadius) {
+  # Find neighborhood members
+  if(all(queryPoint %in% colnames(sce))) {
+    queryData <- assay(sce)[,queryPoint]
+  } else if(length(queryPoint) != nrow(assay(sce)))  {
+    print(paste0("Error: query should be a colname of sce or have same rows as sce assay: ",nrow(assay(sce))))
+    return(NULL)
+  } else {
+    queryData <- queryPoint
+  }
+  
+  max_dist <- sce@metadata$max_dist
+  lim_dist <- max_dist * neighborhoodRadius
+  est_k <- ncol(sce)*neighborhoodRadius*2
+  neighbors <- FNN::get.knnx(data=reducedDim(sce,"PCA")[,1:sce@metadata$params$nPCs], query=queryData, k=est_k)
+  
+  # filter for those below neighborhoodRadius
+  neighborIDs <- neighbors$nn.index[which(neighbors$nn.dist <= lim_dist)]
+  neighborDists <- neighbors$nn.dist[which(neighbors$nn.dist <= lim_dist)]
+  
+  
+  out_list <- list(neighbor.ids=colnames(sce)[neighborIDs],
+                   neighbor.dists=neighborDists)
+  return(out_list)
+  
+}
+
+
 
 

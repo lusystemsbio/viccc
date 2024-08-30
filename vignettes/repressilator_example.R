@@ -2,13 +2,15 @@ rm(list=ls())
 
 
 # these lines install the prerequisites
-install.packages(c( "ellipsis","tidyr","varhandle", "ggplot2","BiocManager"))
-library(BiocManager)
-BiocManager::install(c("sRACIPE","SingleCellExperiment"))
+#install.packages(c( "ellipsis","tidyr","varhandle", "ggplot2","BiocManager"))
+#library(BiocManager)
+#BiocManager::install(c("sRACIPE","SingleCellExperiment"))
 
 # these lines install this package
 # these will be removed at a later date, when the package is hosted on CRAN or Bioconductor
-install.packages("devtools")
+#install.packages("devtools")
+library(roxygen2)
+roxygen2::roxygenize()
 library(devtools)
 devtools::install()
 
