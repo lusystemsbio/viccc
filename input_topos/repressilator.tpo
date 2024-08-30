@@ -1,0 +1,4 @@
+"Source"	"Target"	"Type"
+"1"	"A"	"B"	2
+"2"	"B"	"C"	2
+"3"	"C"	"A"	2
