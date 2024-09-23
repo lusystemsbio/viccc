@@ -6,7 +6,7 @@ rm(list=ls())
 #library(BiocManager)
 #BiocManager::install(c("sRACIPE","SingleCellExperiment"))
 
-# these lines install this package
+# these lines install this package if you cloned the git branch - ignore otherwise!
 # these will be removed at a later date, when the package is hosted on CRAN or Bioconductor
 #install.packages("devtools")
 library(roxygen2)
@@ -17,7 +17,7 @@ devtools::install()
 
 library(sRACIPE)
 library(SingleCellExperiment)
-library(VICCC)
+library(STICCC)
 set.seed(123)
 
 
@@ -56,34 +56,35 @@ exprMat_norm <- assay(racipe_norm)
 
 
 # create SCE object
-# you can also specify other params radius, minNeighbors, etc - see ?vicSE
-vic <- vicSE(topo = topo, exprMat = exprMat, normData = exprMat_norm,
+# you can also specify other params radius, minNeighbors, etc - see ?sticSE
+stic <- sticSE(topo = topo, exprMat = exprMat, normData = exprMat_norm,
              topoName = topoName, expName = "repressilator_example")
 
 
 # Cluster expression data
-vic <- prepMetadata(sce = vic, exprMat = exprMat, cluster = T, k = 6)
+stic <- prepMetadata(sce = stic, exprMat = exprMat, cluster = T, k = 6)
 
 # run PCA
-vic <- runPCA(vic)
+stic <- runPCA(stic)
 
 
 # compute grid based on PCA
-vic <- computeGrid(vic)
+stic <- computeGrid(stic)
 
 # compute pairwise distance between points
-vic <- computeDist(vic)
+stic <- computeDist(stic)
 
 # infer velocities - for a repressilator with 2000 models, expect this to take ~5 min
-vic <- DCComputeTrajectorySCE(vic)
-saveRDS(vic, file.path(topoDir,"vic_repressilator_example.Rds"))
-vic <- readRDS(file.path(topoDir,"vic_repressilator_example.Rds"))
+stic <- runSTICCC(stic)
+saveRDS(stic, file.path(topoDir,"stic_repressilator_example.Rds"))
+stic <- readRDS(file.path(topoDir,"stic_repressilator_example.Rds"))
 
 # grid-based smoothing of velocities
-vic <- computeGridVectors(vic)
+stic <- computeGridVectors(stic)
 
 # plot individual vectors
-plotVectors(vic, colorVar = "Cluster")
+plotVectors(stic, scalingFactor = 0.4,
+            colorVar = "Cluster")
 
 # plot grid-smoothed vectors
-plotGrid(vic, colorVar = "Cluster")
+plotGrid(stic, colorVar = "Cluster")
